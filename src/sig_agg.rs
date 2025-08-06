@@ -25,7 +25,8 @@ pub fn aggregate_partial_adaptor_signatures<S: Into<PartialSignature>>(
     let adaptor_point: MaybePoint = adaptor_point.into();
     let aggregated_pubkey = key_agg_ctx.pubkey;
 
-    let final_nonce: Point = aggregated_nonce.final_nonce();
+    let b: MaybeScalar = aggregated_nonce.nonce_coefficient(aggregated_pubkey, &message);
+    let final_nonce: Point = aggregated_nonce.final_nonce(b);
     let adapted_nonce = final_nonce + adaptor_point;
     let nonce_x_bytes = adapted_nonce.serialize_xonly();
     let e: MaybeScalar = compute_challenge_hash_tweak(&nonce_x_bytes, &aggregated_pubkey, &message);

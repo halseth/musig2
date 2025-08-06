@@ -66,7 +66,8 @@ pub fn sign_partial_adaptor<T: From<PartialSignature>>(
     let aggregated_pubkey = key_agg_ctx.pubkey;
     let pubnonce = secnonce.public_nonce();
 
-    let final_nonce: Point = aggregated_nonce.final_nonce();
+    let b: MaybeScalar = aggregated_nonce.nonce_coefficient(aggregated_pubkey, &message);
+    let final_nonce: Point = aggregated_nonce.final_nonce(b);
     let adapted_nonce = final_nonce + adaptor_point;
 
     // `d` is negated if only one of the parity accumulator OR the aggregated pubkey
@@ -81,7 +82,7 @@ pub fn sign_partial_adaptor<T: From<PartialSignature>>(
     // else:
     //   k = (n-k1) + b(n-k2)
     //     = n - (k1 + b*k2)
-    let secnonce_sum = (secnonce.k1/* + b * secnonce.k2*/).negate_if(adapted_nonce.parity());
+    let secnonce_sum = (secnonce.k1 + b * secnonce.k2).negate_if(adapted_nonce.parity());
 
     // s = k + e*a*d
     let partial_signature = secnonce_sum + (e * key_coeff * d);
@@ -100,6 +101,7 @@ pub fn sign_partial_adaptor<T: From<PartialSignature>>(
 }
 
 pub fn sign_partial_challenge<T: From<PartialSignature>>(
+    b: MaybeScalar,
     key_coeff: MaybeScalar,
     challenge_parity: Choice,
     seckey: impl Into<Scalar>,
@@ -123,7 +125,7 @@ pub fn sign_partial_challenge<T: From<PartialSignature>>(
     //     = n - (k1 + b*k2)
     let r = secnonce.k1;
     println!("secnonce.k1={}", hex::encode(r));
-    let secnonce_sum = (secnonce.k1/* + b * secnonce.k2*/).negate_if(nonce_parity);
+    let secnonce_sum = (secnonce.k1 + b * secnonce.k2).negate_if(nonce_parity);
     println!("secnonce sum: {}", hex::encode(secnonce_sum.serialize()));
     println!("seckey: {}", hex::encode(seckey.serialize()));
     println!("d: {}", hex::encode(d.serialize()));
@@ -145,6 +147,7 @@ pub fn sign_partial_challenge<T: From<PartialSignature>>(
         nonce_parity,
         pubkey,
         &pubnonce,
+        b,
         e,
     )?;
 
@@ -213,10 +216,11 @@ pub fn verify_partial_adaptor(
 
     let aggregated_pubkey = key_agg_ctx.pubkey;
 
-    let final_nonce: Point = aggregated_nonce.final_nonce();
+    let b: MaybeScalar = aggregated_nonce.nonce_coefficient(aggregated_pubkey, &message);
+    let final_nonce: Point = aggregated_nonce.final_nonce(b);
     let adapted_nonce = final_nonce + adaptor_point.into();
 
-    let mut effective_nonce = individual_pubnonce.R1;
+    let mut effective_nonce = individual_pubnonce.R1 + b * individual_pubnonce.R2;
 
     // Don't need constant time ops here as adapted_nonce is public.
     if adapted_nonce.has_odd_y() {
@@ -244,6 +248,7 @@ pub fn verify_partial_challenge(
     nonce_parity: Choice,
     individual_pubkey: impl Into<Point>,
     individual_pubnonce: &PubNonce,
+    b: MaybeScalar,
     e: MaybeScalar,
 ) -> Result<(), VerifyError> {
     let partial_signature: MaybeScalar = partial_signature.into();
@@ -251,7 +256,7 @@ pub fn verify_partial_challenge(
     let individual_pubkey: Point = individual_pubkey.into();
     let effective_pubkey: MaybePoint = individual_pubkey * key_coeff;
 
-    let mut effective_nonce = individual_pubnonce.R1;
+    let mut effective_nonce = individual_pubnonce.R1 + b * individual_pubnonce.R2;
 
     // Don't need constant time ops here as adapted_nonce is public.
     effective_nonce = effective_nonce.negate_if(nonce_parity);
