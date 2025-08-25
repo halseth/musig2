@@ -24,7 +24,7 @@ pub struct KeyAggContext {
     pub(crate) pubkey: Point,
 
     /// The component individual pubkeys in their original order.
-    pub(crate) ordered_pubkeys: Vec<Point>,
+    pub ordered_pubkeys: Vec<Point>,
 
     /// A map of pubkeys to their indexes in the [`ordered_pubkeys`][Self::ordered_pubkeys]
     /// field3.
@@ -90,7 +90,7 @@ impl KeyAggContext {
     /// key will be index `1`, and so on. It is important that the caller can
     /// clearly identify every signer, so that they know who to blame if
     /// a signing contribution (e.g. a partial signature) is invalid.
-    pub fn new<I, P>(pubkeys: I) -> Result<Self, KeyAggError>
+    pub fn new<I, P>(pubkeys: I, key_coeff_salt: Option<&[u8]>) -> Result<Self, KeyAggError>
     where
         I: IntoIterator<Item = P>,
         P: Into<Point>,
@@ -109,7 +109,7 @@ impl KeyAggContext {
             .iter()
             .find(|pubkey| pubkey != &&ordered_pubkeys[0]);
 
-        let pk_list_hash = hash_pubkeys(&ordered_pubkeys);
+        let pk_list_hash = hash_pubkeys(&ordered_pubkeys, key_coeff_salt);
 
         let (effective_pubkeys, key_coefficients): (Vec<MaybePoint>, Vec<MaybeScalar>) =
             ordered_pubkeys
@@ -493,8 +493,14 @@ impl KeyAggContext {
     }
 }
 
-fn hash_pubkeys<P: std::borrow::Borrow<Point>>(ordered_pubkeys: &[P]) -> [u8; 32] {
+fn hash_pubkeys<P: std::borrow::Borrow<Point>>(ordered_pubkeys: &[P], salt: Option<&[u8]>) -> [u8; 32] {
     let mut h = tagged_hashes::KEYAGG_LIST_TAG_HASHER.clone();
+    match salt {
+        None => {}
+        Some(s) => {
+            h.update(s);
+        }
+    }
     for pubkey in ordered_pubkeys {
         h.update(pubkey.borrow().serialize());
     }
@@ -619,7 +625,7 @@ impl BinaryEncoding for KeyAggContext {
             .map(Point::from_slice)
             .collect::<Result<_, _>>()?;
 
-        let mut key_agg_ctx = KeyAggContext::new(pubkeys)?;
+        let mut key_agg_ctx = KeyAggContext::new(pubkeys, None)?;
         key_agg_ctx.parity_acc = parity_acc;
 
         if bool::from(parity_acc) {
