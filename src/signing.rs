@@ -102,7 +102,6 @@ pub fn sign_partial_adaptor<T: From<PartialSignature>>(
 
 pub fn sign_partial_challenge<T: From<PartialSignature>>(
     b: MaybeScalar,
-    key_coeff: MaybeScalar,
     challenge_parity: Choice,
     seckey: impl Into<Scalar>,
     secnonce: SecNonce,
@@ -141,7 +140,6 @@ pub fn sign_partial_challenge<T: From<PartialSignature>>(
     let partial_signature = secnonce_sum + (e * d);
 
     verify_partial_challenge(
-        key_coeff,
         challenge_parity,
         partial_signature,
         nonce_parity,
@@ -242,7 +240,6 @@ pub fn verify_partial_adaptor(
 }
 
 pub fn verify_partial_challenge(
-    key_coeff: MaybeScalar,
     challenge_parity: Choice,
     partial_signature: impl Into<PartialSignature>,
     nonce_parity: Choice,
