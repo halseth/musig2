@@ -138,7 +138,7 @@ pub fn sign_partial_challenge<T: From<PartialSignature>>(
     println!("-r-x={} (-r-x)*G={}", hex::encode(r_neg_x_neg.serialize()), r_neg_x_neg*G);
 
     // s = k + e*a*d
-    let partial_signature = secnonce_sum + (e * key_coeff * d);
+    let partial_signature = secnonce_sum + (e * d);
 
     verify_partial_challenge(
         key_coeff,
@@ -254,7 +254,7 @@ pub fn verify_partial_challenge(
     let partial_signature: MaybeScalar = partial_signature.into();
 
     let individual_pubkey: Point = individual_pubkey.into();
-    let effective_pubkey: MaybePoint = individual_pubkey * key_coeff;
+    let effective_pubkey: MaybePoint = individual_pubkey.into();
 
     let mut effective_nonce = individual_pubnonce.R1 + b * individual_pubnonce.R2;
 
