@@ -123,18 +123,18 @@ pub fn sign_partial_challenge<T: From<PartialSignature>>(
     //   k = (n-k1) + b(n-k2)
     //     = n - (k1 + b*k2)
     let r = secnonce.k1;
-    println!("secnonce.k1={}", hex::encode(r));
+    //println!("secnonce.k1={}", hex::encode(r));
     let secnonce_sum = (secnonce.k1 + b * secnonce.k2).negate_if(nonce_parity);
-    println!("secnonce sum: {}", hex::encode(secnonce_sum.serialize()));
-    println!("seckey: {}", hex::encode(seckey.serialize()));
-    println!("d: {}", hex::encode(d.serialize()));
+    //println!("secnonce sum: {}", hex::encode(secnonce_sum.serialize()));
+    //println!("seckey: {}", hex::encode(seckey.serialize()));
+    //println!("d: {}", hex::encode(d.serialize()));
     let rx =  r + d;
     let rx_neg =  r - d;
     let r_neg_x_neg =  -r - d;
 
-    println!("r+x={} (r+x)*G={}", hex::encode(rx.serialize()), rx*G);
-    println!("r-x={} (r-x)*G={}", hex::encode(rx_neg.serialize()), rx_neg*G);
-    println!("-r-x={} (-r-x)*G={}", hex::encode(r_neg_x_neg.serialize()), r_neg_x_neg*G);
+    //println!("r+x={} (r+x)*G={}", hex::encode(rx.serialize()), rx*G);
+    //println!("r-x={} (r-x)*G={}", hex::encode(rx_neg.serialize()), rx_neg*G);
+    //println!("-r-x={} (-r-x)*G={}", hex::encode(r_neg_x_neg.serialize()), r_neg_x_neg*G);
 
     // s = k + e*a*d
     let partial_signature = secnonce_sum + (e * d);
@@ -258,20 +258,20 @@ pub fn verify_partial_challenge(
     // Don't need constant time ops here as adapted_nonce is public.
     effective_nonce = effective_nonce.negate_if(nonce_parity);
 
-    println!("=========== partial verification =============");
+    //println!("=========== partial verification =============");
 
     // s * G == R + (g * gacc * e * a * P)
     let challenge_point: MaybePoint = (e * effective_pubkey).negate_if(challenge_parity);
 
-    println!("partial signature: {}", hex::encode(partial_signature.serialize()));
-    println!("partial signature * G: {}", partial_signature * G);
-    println!("effective_nonce: {}", hex::encode(effective_nonce.serialize_xonly()));
-    println!("challenge point: {}", challenge_point);
+    //println!("partial signature: {}", hex::encode(partial_signature.serialize()));
+    //println!("partial signature * G: {}", partial_signature * G);
+    //println!("effective_nonce: {}", hex::encode(effective_nonce.serialize_xonly()));
+    //println!("challenge point: {}", challenge_point);
 
     if partial_signature * G != effective_nonce + challenge_point {
         return Err(VerifyError::BadSignature);
     }
-    println!("=========== END partial verification =============");
+    //println!("=========== END partial verification =============");
 
     Ok(())
 }
