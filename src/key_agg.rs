@@ -7,6 +7,9 @@ use crate::{tagged_hashes, BinaryEncoding};
 use sha2::Digest as _;
 use subtle::ConstantTimeEq as _;
 
+#[cfg(feature = "k256")]
+use k256::elliptic_curve::ops::LinearCombinationExt;
+
 /// Represents an aggregated and tweaked public key.
 ///
 /// A set of pubkeys can be aggregated into a `KeyAggContext` which
@@ -24,18 +27,15 @@ pub struct KeyAggContext {
     pub(crate) pubkey: Point,
 
     /// The component individual pubkeys in their original order.
-    pub(crate) ordered_pubkeys: Vec<Point>,
+    pub ordered_pubkeys: Vec<Point>,
 
     /// A map of pubkeys to their indexes in the [`ordered_pubkeys`][Self::ordered_pubkeys]
-    /// field.
+    /// field3.
     pub(crate) pubkey_indexes: HashMap<Point, usize>,
 
     /// Cached key aggregation coefficients of individual pubkeys, in the
     /// same order as `ordered_pubkeys`.
     pub(crate) key_coefficients: Vec<MaybeScalar>,
-
-    /// A cache of effective individual pubkeys, i.e. `pubkey * self.key_coefficient(pubkey)`.
-    pub(crate) effective_pubkeys: Vec<MaybePoint>,
 
     pub(crate) parity_acc: subtle::Choice, // false means g=1, true means g=n-1
     pub(crate) tweak_acc: MaybeScalar,     // None means zero.
@@ -90,7 +90,7 @@ impl KeyAggContext {
     /// key will be index `1`, and so on. It is important that the caller can
     /// clearly identify every signer, so that they know who to blame if
     /// a signing contribution (e.g. a partial signature) is invalid.
-    pub fn new<I, P>(pubkeys: I) -> Result<Self, KeyAggError>
+    pub fn new<I, P>(pubkeys: I, key_coeff_salt: Option<&[u8]>) -> Result<Self, KeyAggError>
     where
         I: IntoIterator<Item = P>,
         P: Into<Point>,
@@ -109,19 +109,44 @@ impl KeyAggContext {
             .iter()
             .find(|pubkey| pubkey != &&ordered_pubkeys[0]);
 
-        let pk_list_hash = hash_pubkeys(&ordered_pubkeys);
+        let pk_list_hash = hash_pubkeys(&ordered_pubkeys, key_coeff_salt);
 
-        let (effective_pubkeys, key_coefficients): (Vec<MaybePoint>, Vec<MaybeScalar>) =
-            ordered_pubkeys
+        // Compute key coefficients for all pubkeys
+        let key_coefficients: Vec<MaybeScalar> = ordered_pubkeys
+            .iter()
+            .map(|&pubkey| compute_key_aggregation_coefficient(&pk_list_hash, &pubkey, pk2))
+            .collect();
+
+        // Use lincomb to efficiently compute aggregated_pubkey = Σ(pubkey[i] * key_coeff[i])
+        #[cfg(feature = "k256")]
+        let aggregated_pubkey = {
+            let pairs: Vec<(k256::ProjectivePoint, k256::Scalar)> = ordered_pubkeys
                 .iter()
-                .map(|&pubkey| {
-                    let key_coeff =
-                        compute_key_aggregation_coefficient(&pk_list_hash, &pubkey, pk2);
-                    (pubkey * key_coeff, key_coeff)
+                .zip(key_coefficients.iter())
+                .map(|(&pubkey, &key_coeff)| {
+                    let k256_point: k256::ProjectivePoint = k256::PublicKey::from(pubkey).into();
+                    // Convert MaybeScalar -> Scalar -> k256::Scalar
+                    let scalar: Scalar = key_coeff.not_zero()
+                        .expect("key coefficient should never be zero");
+                    let k256_scalar: k256::Scalar = scalar.into();
+                    (k256_point, k256_scalar)
                 })
-                .unzip();
+                .collect();
 
-        let aggregated_pubkey = MaybePoint::sum(&effective_pubkeys).not_inf()?;
+            let result = k256::ProjectivePoint::lincomb_ext(&pairs[..]);
+            Point::from(k256::PublicKey::from_affine(result.into()).unwrap())
+        };
+
+        // Fallback to individual multiplications when k256 feature is not enabled
+        #[cfg(not(feature = "k256"))]
+        let aggregated_pubkey = {
+            let effective_pubkeys: Vec<MaybePoint> = ordered_pubkeys
+                .iter()
+                .zip(key_coefficients.iter())
+                .map(|(&pubkey, &key_coeff)| pubkey * key_coeff)
+                .collect();
+            MaybePoint::sum(&effective_pubkeys).not_inf()?
+        };
 
         let pubkey_indexes = HashMap::from_iter(
             ordered_pubkeys
@@ -136,7 +161,6 @@ impl KeyAggContext {
             ordered_pubkeys,
             pubkey_indexes,
             key_coefficients,
-            effective_pubkeys,
             parity_acc: subtle::Choice::from(0),
             tweak_acc: MaybeScalar::Zero,
         })
@@ -368,6 +392,10 @@ impl KeyAggContext {
         T::from(self.pubkey)
     }
 
+    pub fn parity_acc(&self) -> subtle::Choice {
+        self.parity_acc
+    }
+
     /// Returns the aggregated pubkey without any tweaks.
     ///
     /// ```
@@ -454,14 +482,14 @@ impl KeyAggContext {
     }
 
     /// Finds the effective pubkey for a given individual pubkey. This is
-    /// essentially the same as `pubkey * key_agg_ctx.key_coefficient(pubkey)`,
-    /// except it is faster than recomputing it manually because the `key_agg_ctx`
-    /// caches this value internally.
+    /// computed as `pubkey * key_agg_ctx.key_coefficient(pubkey)`.
     ///
     /// Returns `None` if the given `pubkey` is not part of the aggregated key.
     pub fn effective_pubkey<T: From<MaybePoint>>(&self, pubkey: impl Into<Point>) -> Option<T> {
+        let pubkey: Point = pubkey.into();
         let index = self.pubkey_index(pubkey)?;
-        Some(T::from(self.effective_pubkeys[index]))
+        let effective = self.ordered_pubkeys[index] * self.key_coefficients[index];
+        Some(T::from(effective))
     }
 
     /// Compute the aggregated secret key for the [`KeyAggContext`] given an ordered
@@ -489,8 +517,14 @@ impl KeyAggContext {
     }
 }
 
-fn hash_pubkeys<P: std::borrow::Borrow<Point>>(ordered_pubkeys: &[P]) -> [u8; 32] {
+fn hash_pubkeys<P: std::borrow::Borrow<Point>>(ordered_pubkeys: &[P], salt: Option<&[u8]>) -> [u8; 32] {
     let mut h = tagged_hashes::KEYAGG_LIST_TAG_HASHER.clone();
+    match salt {
+        None => {}
+        Some(s) => {
+            h.update(s);
+        }
+    }
     for pubkey in ordered_pubkeys {
         h.update(pubkey.borrow().serialize());
     }
@@ -615,7 +649,7 @@ impl BinaryEncoding for KeyAggContext {
             .map(Point::from_slice)
             .collect::<Result<_, _>>()?;
 
-        let mut key_agg_ctx = KeyAggContext::new(pubkeys)?;
+        let mut key_agg_ctx = KeyAggContext::new(pubkeys, None)?;
         key_agg_ctx.parity_acc = parity_acc;
 
         if bool::from(parity_acc) {

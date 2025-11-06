@@ -417,8 +417,8 @@ impl<'snb> SecNonceBuilder<'snb> {
 /// random number generator via [`SecNonce::generate`].
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SecNonce {
-    pub(crate) k1: Scalar,
-    pub(crate) k2: Scalar,
+    pub k1: Scalar,
+    pub k2: Scalar,
 }
 
 impl SecNonce {
